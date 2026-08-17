@@ -524,15 +524,20 @@ class L2VATab(BaseModeTab):
 # Ref2VA : références multiples
 # ------------------------------------------------------------------------- #
 class AddReferenceDialog(ctk.CTkToplevel):
-    def __init__(self, master, app: "H3StudioApp", on_add):
+    TYPE_TO_LABEL = {"Picture": "Picture (image)", "Video": "Video", "Audio": "Audio"}
+
+    def __init__(self, master, app: "H3StudioApp", on_save, existing_ref: dict | None = None):
         super().__init__(master)
-        self.title("Add a reference")
+        self.title("Edit reference" if existing_ref else "Add a reference")
         self.geometry("520x480")
         self.app = app
-        self.on_add = on_add
+        self.on_save = on_save
         self.grab_set()
 
-        self.ref_type = LabeledCombo(self, "Reference type", ["Picture (image)", "Video", "Audio"])
+        default_type = self.TYPE_TO_LABEL.get((existing_ref or {}).get("type"))
+        self.ref_type = LabeledCombo(
+            self, "Reference type", ["Picture (image)", "Video", "Audio"], default=default_type,
+        )
         self.ref_type.pack(fill="x", padx=16, pady=(16, 4))
 
         row = ctk.CTkFrame(self, fg_color="transparent")
@@ -540,22 +545,29 @@ class AddReferenceDialog(ctk.CTkToplevel):
         self.path_entry = ctk.CTkEntry(row, placeholder_text="file path (optional)")
         self.path_entry.pack(side="left", fill="x", expand=True, padx=(0, 6))
         ctk.CTkButton(row, text="Browse…", width=100, command=self._browse).pack(side="left")
+        if existing_ref and existing_ref.get("path"):
+            self.path_entry.insert(0, existing_ref["path"])
 
         self.role = LabeledEntry(
             self, "Role of this reference",
             placeholder="e.g. first-frame anchor, character style, voice timbre…",
         )
         self.role.pack(fill="x", padx=16, pady=(8, 0))
+        if existing_ref and existing_ref.get("role"):
+            self.role.set(existing_ref["role"])
 
         self.description = LabeledText(
             self, "Detailed description (subject, appearance, content…)", height=140,
         )
         self.description.pack(fill="x", padx=16, pady=(8, 0))
+        if existing_ref and existing_ref.get("description"):
+            self.description.set(existing_ref["description"])
 
         vision_btn = ctk.CTkButton(self, text="Describe the image with the vision model", command=self._describe)
         vision_btn.pack(fill="x", padx=16, pady=(8, 0))
 
-        ctk.CTkButton(self, text="Add the reference", height=38, command=self._confirm).pack(
+        confirm_label = "Save changes" if existing_ref else "Add the reference"
+        ctk.CTkButton(self, text=confirm_label, height=38, command=self._confirm).pack(
             fill="x", padx=16, pady=16
         )
 
@@ -601,7 +613,7 @@ class AddReferenceDialog(ctk.CTkToplevel):
         if not role and not desc:
             messagebox.showwarning("Incomplete reference", "Please provide at least a role or a description.")
             return
-        self.on_add({"type": ref_type, "path": path, "role": role, "description": desc})
+        self.on_save({"type": ref_type, "path": path, "role": role, "description": desc})
         self.destroy()
 
 
@@ -828,6 +840,23 @@ class Ref2VATab(ctk.CTkScrollableFrame):
         del self.references[idx]
         self._refresh_ref_list()
 
+    def _edit_reference(self, idx: int):
+        def on_save(new_ref):
+            old_type = self.references[idx]["type"]
+            if new_ref["type"] != old_type:
+                counts = self._counts()
+                limits = {"Picture": MAX_IMAGES, "Video": MAX_VIDEOS, "Audio": MAX_AUDIO}
+                counts[old_type] -= 1  # le slot remplacé se libère
+                if counts.get(new_ref["type"], 0) >= limits[new_ref["type"]]:
+                    messagebox.showwarning(
+                        "Limit reached", f"Maximum {limits[new_ref['type']]} references of type {new_ref['type']}."
+                    )
+                    return
+            self.references[idx] = new_ref
+            self._refresh_ref_list()
+
+        AddReferenceDialog(self, self.app, on_save, existing_ref=self.references[idx])
+
     def _refresh_ref_list(self):
         for w in self.ref_list_frame.winfo_children():
             w.destroy()
@@ -841,13 +870,17 @@ class Ref2VATab(ctk.CTkScrollableFrame):
             row = ctk.CTkFrame(self.ref_list_frame, corner_radius=6)
             row.pack(fill="x", pady=3)
             text = f"{tag}  —  {ref['role'] or '(no role specified)'}"
-            ctk.CTkLabel(row, text=text, anchor="w", justify="left", wraplength=520).pack(
+            ctk.CTkLabel(row, text=text, anchor="w", justify="left", wraplength=460).pack(
                 side="left", fill="x", expand=True, padx=8, pady=6
             )
             ctk.CTkButton(
                 row, text="✕", width=28, fg_color="transparent", hover_color="#7a2020",
                 command=lambda idx=i: self._remove_reference(idx),
             ).pack(side="right", padx=6)
+            ctk.CTkButton(
+                row, text="✏", width=28, fg_color="transparent",
+                command=lambda idx=i: self._edit_reference(idx),
+            ).pack(side="right")
 
         counts = self._counts()
         self.ref_count_label.configure(
@@ -999,40 +1032,99 @@ class Ref2VATab(ctk.CTkScrollableFrame):
 # Ref2VA par séquence (réutilise run_generation_sequence).
 # ------------------------------------------------------------------------- #
 class SequenceCard(ctk.CTkFrame):
-    """Affichage en lecture seule d'une séquence décidée par le LLM."""
+    """Affichage d'une séquence décidée par le LLM — entièrement éditable :
+    brief, references, dialogue et camera movement sont tous des champs texte
+    dont les modifications sont répercutées en direct sur le dict `seq` (le
+    même objet que celui stocké dans SequenceTab.sequences), donc les
+    corrections manuelles sont bien prises en compte par sequence_to_brief()
+    ensuite."""
 
     def __init__(self, master, seq: dict):
         super().__init__(master, corner_radius=8, fg_color=("gray92", "gray17"))
+        self.seq = seq
+        seq.setdefault("dialogue", {})
         title = f"Scene {seq.get('index', '?')} — {seq.get('title', '')}"
         ctk.CTkLabel(self, text=title, font=ctk.CTkFont(weight="bold")).pack(
             anchor="w", padx=10, pady=(8, 2)
         )
-        ctk.CTkLabel(
-            self, text=seq.get("brief", ""), anchor="w", justify="left",
-            wraplength=620, text_color="gray80",
+
+        # -- Brief ------------------------------------------------------- #
+        ctk.CTkLabel(self, text="Brief", text_color="gray60", anchor="w").pack(
+            anchor="w", padx=10, pady=(2, 0)
+        )
+        self.brief_box = ctk.CTkTextbox(self, height=70, wrap="word")
+        self.brief_box.pack(fill="x", padx=10, pady=(0, 4))
+        self.brief_box.insert("1.0", seq.get("brief", ""))
+        self.brief_box.bind("<KeyRelease>", self._on_brief_edit)
+        self.brief_box.bind("<FocusOut>", self._on_brief_edit)
+
+        # -- References (comma-separated) --------------------------------- #
+        ctk.CTkLabel(self, text="References (comma-separated)", text_color="gray60", anchor="w").pack(
+            anchor="w", padx=10, pady=(2, 0)
+        )
+        self.references_entry = ctk.CTkEntry(self)
+        self.references_entry.pack(fill="x", padx=10, pady=(0, 4))
+        self.references_entry.insert(0, ", ".join(seq.get("references") or []))
+        self.references_entry.bind("<KeyRelease>", self._on_references_edit)
+        self.references_entry.bind("<FocusOut>", self._on_references_edit)
+
+        # -- Dialogue ------------------------------------------------------ #
+        ctk.CTkLabel(self, text="Dialogue", text_color="gray60", anchor="w").pack(
+            anchor="w", padx=10, pady=(2, 0)
+        )
+        dlg_row = ctk.CTkFrame(self, fg_color="transparent")
+        dlg_row.pack(fill="x", padx=10, pady=(0, 2))
+        self.dlg_speaker_entry = ctk.CTkEntry(dlg_row, placeholder_text="Speaker")
+        self.dlg_speaker_entry.pack(side="left", fill="x", expand=True, padx=(0, 4))
+        self.dlg_speaker_entry.insert(0, seq["dialogue"].get("speaker", ""))
+        self.dlg_language_entry = ctk.CTkEntry(dlg_row, placeholder_text="Language", width=120)
+        self.dlg_language_entry.pack(side="left")
+        self.dlg_language_entry.insert(0, seq["dialogue"].get("language", ""))
+
+        self.dlg_text_box = ctk.CTkTextbox(self, height=50, wrap="word")
+        self.dlg_text_box.pack(fill="x", padx=10, pady=(0, 2))
+        self.dlg_text_box.insert("1.0", seq["dialogue"].get("text", ""))
+
+        self.dlg_voiceover_var = ctk.BooleanVar(value=bool(seq["dialogue"].get("voiceover")))
+        ctk.CTkCheckBox(
+            self, text="Voiceover (off-screen)", variable=self.dlg_voiceover_var,
+            command=self._on_dialogue_edit,
         ).pack(anchor="w", padx=10, pady=(0, 4))
 
-        refs = ", ".join(seq.get("references") or []) or "(none)"
-        dlg = seq.get("dialogue", {}) or {}
-        if dlg.get("present"):
-            dlg_text = f"\"{dlg.get('text', '')}\" — {dlg.get('speaker', '')} ({dlg.get('language', '')})"
-            if dlg.get("voiceover"):
-                dlg_text += " [voiceover]"
-        else:
-            dlg_text = "none"
+        for widget in (self.dlg_speaker_entry, self.dlg_language_entry, self.dlg_text_box):
+            widget.bind("<KeyRelease>", self._on_dialogue_edit)
+            widget.bind("<FocusOut>", self._on_dialogue_edit)
 
-        for label, value in (
-            ("References", refs),
-            ("Dialogue", dlg_text),
-            ("Camera", seq.get("camera_movement", "")),
-        ):
-            row = ctk.CTkFrame(self, fg_color="transparent")
-            row.pack(fill="x", padx=10)
-            ctk.CTkLabel(row, text=f"{label}: ", text_color="gray60", width=90, anchor="w").pack(side="left")
-            ctk.CTkLabel(row, text=value, anchor="w", justify="left", wraplength=520).pack(
-                side="left", fill="x", expand=True
-            )
-        ctk.CTkFrame(self, fg_color="transparent", height=6).pack()
+        # -- Camera movement ------------------------------------------------ #
+        ctk.CTkLabel(self, text="Camera movement", text_color="gray60", anchor="w").pack(
+            anchor="w", padx=10, pady=(2, 0)
+        )
+        self.camera_entry = ctk.CTkEntry(self)
+        self.camera_entry.pack(fill="x", padx=10, pady=(0, 8))
+        self.camera_entry.insert(0, seq.get("camera_movement", ""))
+        self.camera_entry.bind("<KeyRelease>", self._on_camera_edit)
+        self.camera_entry.bind("<FocusOut>", self._on_camera_edit)
+
+    def _on_brief_edit(self, _event=None):
+        self.seq["brief"] = self.brief_box.get("1.0", "end-1c")
+
+    def _on_references_edit(self, _event=None):
+        raw = self.references_entry.get()
+        self.seq["references"] = [r.strip() for r in raw.split(",") if r.strip()]
+
+    def _on_dialogue_edit(self, _event=None):
+        text = self.dlg_text_box.get("1.0", "end-1c").strip()
+        dlg = self.seq.setdefault("dialogue", {})
+        dlg["speaker"] = self.dlg_speaker_entry.get().strip()
+        dlg["language"] = self.dlg_language_entry.get().strip()
+        dlg["text"] = text
+        dlg["voiceover"] = self.dlg_voiceover_var.get()
+        # présence déduite automatiquement : dès qu'il y a une ligne de texte, on
+        # considère qu'il y a du dialogue - pas besoin d'une case à cocher en plus.
+        dlg["present"] = bool(text)
+
+    def _on_camera_edit(self, _event=None):
+        self.seq["camera_movement"] = self.camera_entry.get()
 
 
 class SequenceTab(ctk.CTkScrollableFrame):
@@ -1162,6 +1254,23 @@ class SequenceTab(ctk.CTkScrollableFrame):
         del self.references[idx]
         self._refresh_ref_list()
 
+    def _edit_reference(self, idx: int):
+        def on_save(new_ref):
+            old_type = self.references[idx]["type"]
+            if new_ref["type"] != old_type:
+                counts = self._counts()
+                limits = {"Picture": MAX_IMAGES, "Video": MAX_VIDEOS, "Audio": MAX_AUDIO}
+                counts[old_type] -= 1  # le slot remplacé se libère
+                if counts.get(new_ref["type"], 0) >= limits[new_ref["type"]]:
+                    messagebox.showwarning(
+                        "Limit reached", f"Maximum {limits[new_ref['type']]} references of type {new_ref['type']}."
+                    )
+                    return
+            self.references[idx] = new_ref
+            self._refresh_ref_list()
+
+        AddReferenceDialog(self, self.app, on_save, existing_ref=self.references[idx])
+
     def _refresh_ref_list(self):
         for w in self.ref_list_frame.winfo_children():
             w.destroy()
@@ -1173,13 +1282,17 @@ class SequenceTab(ctk.CTkScrollableFrame):
             row = ctk.CTkFrame(self.ref_list_frame, corner_radius=6)
             row.pack(fill="x", pady=3)
             text = f"{tag}  —  {ref['role'] or '(no role specified)'}"
-            ctk.CTkLabel(row, text=text, anchor="w", justify="left", wraplength=520).pack(
+            ctk.CTkLabel(row, text=text, anchor="w", justify="left", wraplength=460).pack(
                 side="left", fill="x", expand=True, padx=8, pady=6
             )
             ctk.CTkButton(
                 row, text="✕", width=28, fg_color="transparent", hover_color="#7a2020",
                 command=lambda idx=i: self._remove_reference(idx),
             ).pack(side="right", padx=6)
+            ctk.CTkButton(
+                row, text="✏", width=28, fg_color="transparent",
+                command=lambda idx=i: self._edit_reference(idx),
+            ).pack(side="right")
         counts = self._counts()
         self.ref_count_label.configure(
             text=(
