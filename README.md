@@ -1,84 +1,84 @@
 # H3 Prompt Studio
 
-Application desktop (Python / CustomTkinter) pour construire des prompts structurés et conformes au format **MiniMax H3** (modèle audio-vidéo open-source), à partir de formulaires guidés plutôt que d'écrire le prompt à la main. Tourne 100% en local via un LLM (Ollama, LM Studio ou llama.cpp) — aucune donnée n'est envoyée à un service externe.
+A desktop application (Python / CustomTkinter) for building structured prompts compliant with the **MiniMax H3** format (open-source audio-video model) through guided forms instead of hand-writing the prompt. Runs 100% locally via an LLM (Ollama, LM Studio, or llama.cpp) — no data is sent to any external service.
 
-H3 attend un format de prompt rigide, structuré et étiqueté, très différent d'une description en langage naturel. L'app fait l'aller-retour : vous remplissez des champs simples (scénario, style, dialogue, références...), le LLM local transforme ça en prompt H3 complet et conforme.
+H3 expects a rigid, structured, labelled prompt format that is very different from a natural-language description. The app does the round-trip: you fill in simple fields (scenario, style, dialogue, references...), and the local LLM turns that into a full, compliant H3 prompt.
 
 ---
 
-## Sommaire
+## Table of contents
 
-- [Fonctionnalités](#fonctionnalités)
-- [Les 5 modes de génération](#les-5-modes-de-génération)
-- [Onglet Story → Sequences](#onglet-story--sequences)
-- [Backends LLM supportés](#backends-llm-supportés)
+- [Features](#features)
+- [The 5 generation modes](#the-5-generation-modes)
+- [Story → Sequences tab](#story--sequences-tab)
+- [Supported LLM backends](#supported-llm-backends)
 - [Installation](#installation)
 - [Configuration](#configuration)
-- [Architecture du code](#architecture-du-code)
-- [Limites connues](#limites-connues)
+- [Code architecture](#code-architecture)
+- [Known limitations](#known-limitations)
 
 ---
 
-## Fonctionnalités
+## Features
 
-- **5 modes de génération H3** couvrant tous les cas d'usage du modèle (texte seul, image de première frame, première+dernière frame, dernière frame seule, multi-références).
-- **Mode storyboard** dans Ref2VA : découpe une scène en plusieurs scènes chaînées, chacune avec son propre dialogue et ses propres références, générées en une seule séquence.
-- **Onglet Story → Sequences** : à partir d'une bibliothèque d'images de référence, génère une courte histoire puis la découpe automatiquement en N séquences vidéo, chacune développée en prompt Ref2VA complet.
-- **Description automatique d'images** via un modèle de vision local (ex. `qwen2.5vl`), pour éviter de décrire chaque référence à la main.
-- **Streaming** de la génération token par token dans la zone de sortie.
-- **3 backends LLM interchangeables** : Ollama, LM Studio, llama.cpp (llama-server) — tous 100% locaux.
-- **Réglages persistants** (backend, URLs, modèles, température, durée par défaut) sauvegardés automatiquement dans `~/.h3_prompt_studio_config.json`.
-- **Sauvegarde / chargement de session** pour l'onglet Story → Sequences (références, histoire, séquences et réglages) au format JSON.
-- **Export** du prompt généré en presse-papier ou en fichier `.txt`.
+- **5 H3 generation modes** covering every use case of the model (text only, first-frame image, first+last frame, last frame only, multi-reference).
+- **Storyboard mode** inside Ref2VA: splits a scene into several chained scenes, each with its own dialogue and its own references, generated in a single sequence.
+- **Story → Sequences tab**: starting from a library of reference images, generates a short story and then automatically splits it into N video sequences, each expanded into a full Ref2VA prompt.
+- **Automatic image description** via a local vision model (e.g. `qwen2.5vl`), to avoid describing every reference by hand.
+- **Streaming** generation, token by token, into the output pane.
+- **3 interchangeable LLM backends**: Ollama, LM Studio, llama.cpp (llama-server) — all fully local.
+- **Persistent settings** (backend, URLs, models, temperature, default duration) automatically saved to `~/.h3_prompt_studio_config.json`.
+- **Session save/load** for the Story → Sequences tab (references, story, sequences, and settings) as a JSON file.
+- **Export** of the generated prompt to clipboard or to a `.txt` file.
 
 ---
 
-## Les 5 modes de génération
+## The 5 generation modes
 
-Chaque mode correspond à un onglet, avec un formulaire adapté (scénario, style visuel, notes caméra, dialogue, ambiance sonore, musique) et produit un prompt H3 conforme (champs `integrated_multimodal_description`, `overall_soundscape`, `non_diegetic_music`, ou la structure 6-sections de Ref2VA).
+Each mode has its own tab, with a form tailored to it (scenario, visual style, camera notes, dialogue, soundscape, music), producing a compliant H3 prompt (fields `integrated_multimodal_description`, `overall_soundscape`, `non_diegetic_music`, or Ref2VA's 6-section structure).
 
-| Mode | Description | Entrée |
+| Mode | Description | Input |
 |---|---|---|
-| **T2VA** | Texte → Vidéo+Audio | Aucune image, tout est construit depuis un scénario texte. |
-| **I2VA** | Image → Vidéo+Audio | Une image ancre la première frame (0.00s) ; le LLM décrit la suite. |
-| **FL2VA** | Première + Dernière frame → Vidéo+Audio | Deux images ancrent le début et la fin ; le LLM décrit le mouvement entre les deux. |
-| **L2VA** | Dernière frame seule → Vidéo+Audio | Une image ancre la fin ; le LLM invente un état de départ plausible. |
-| **Ref2VA** | Multi-références (mode complet) | Jusqu'à 9 images / 3 vidéos / 3 audios (12 références max) ; le LLM assigne `<Subject N>`, `<Picture N>`, `<Video N>`, `<Audio N>` et écrit les 6 sections du prompt (subject_definitions, summary, retention_analysis, detailed_description, overall_soundscape, non_diegetic_music). |
+| **T2VA** | Text → Video+Audio | No image; everything is built from a text scenario. |
+| **I2VA** | Image → Video+Audio | One image anchors the first frame (0.00s); the LLM describes what happens next. |
+| **FL2VA** | First + Last frame → Video+Audio | Two images anchor the start and the end; the LLM describes the motion connecting them. |
+| **L2VA** | Last frame only → Video+Audio | One image anchors the end; the LLM invents a plausible starting state. |
+| **Ref2VA** | Multi-reference (full mode) | Up to 9 images / 3 videos / 3 audio clips (12 references max); the LLM assigns `<Subject N>`, `<Picture N>`, `<Video N>`, `<Audio N>` labels and writes the 6 prompt sections (subject_definitions, summary, retention_analysis, detailed_description, overall_soundscape, non_diegetic_music). |
 
-Ref2VA a également un **mode storyboard** activable : on définit N scènes, chacune avec son propre brief, dialogue et sélection de références parmi la bibliothèque partagée ; chaque scène est développée en un prompt H3 indépendant.
+Ref2VA also has an optional **storyboard mode**: define N scenes, each with its own brief, dialogue, and selection of references from the shared library; every scene is expanded into its own standalone H3 prompt.
 
-Champs communs à tous les modes (bloc "Dialogue / voice" + "Sound & music") :
-- Dialogue avec speaker, langue, texte exact, option voiceover.
-- Texte à l'écran (enseignes, sous-titres...).
-- Ambiance sonore et musique (ou silence explicite).
-- Notes libres additionnelles pour le LLM.
-
----
-
-## Onglet Story → Sequences
-
-Construit un prompt Ref2VA par séquence à partir d'une seule bibliothèque de références, en 3 passes LLM :
-
-1. **Références** : on ajoute des images/vidéos/audios avec rôle et description (comme dans Ref2VA), avec description automatique via modèle de vision.
-2. **Génération de l'histoire** (Pass A) : le LLM écrit une courte narration (~200-500 mots) qui utilise les références fournies, à partir d'une prémisse optionnelle et d'une langue cible.
-3. **Découpage en séquences** (Pass B) : le LLM reçoit l'histoire, la bibliothèque de références et le vocabulaire de mouvements de caméra, et retourne un tableau JSON de N séquences — pour chacune il choisit lui-même les références concernées, la présence/absence de dialogue, et le mouvement de caméra. Un mécanisme de réconciliation ajoute automatiquement les références omises par erreur (recoupement par mots-clés entre le brief de la séquence et la description des références).
-4. **Génération des prompts finaux** : chaque séquence est développée en un prompt Ref2VA complet et isolé (règle d'isolation stricte : le contenu d'une séquence ne doit jamais fuiter dans une autre).
-
-Robustesse : réparation de JSON tronqué (troncature liée au `max_tokens` des modèles locaux) avec retry automatique en cas d'échec de parsing.
-
-**Sauvegarde / chargement** : boutons dédiés pour enregistrer toute la session (références, prémisse, langue, histoire, nombre/durée de séquences, style, instructions additionnelles, séquences générées) dans un fichier `.json`, et la recharger plus tard pour reprendre le travail.
+Fields shared across all modes ("Dialogue / voice" + "Sound & music" blocks):
+- Dialogue with speaker description, language, exact text, voiceover option.
+- On-screen text (signs, subtitles...).
+- Soundscape and music (or explicit silence).
+- Free extra instructions for the LLM.
 
 ---
 
-## Backends LLM supportés
+## Story → Sequences tab
 
-| Backend | API | Host par défaut |
+Builds one Ref2VA prompt per sequence from a single reference library, in 3 LLM passes:
+
+1. **References**: add images/videos/audio with a role and a description (same as Ref2VA), with automatic description via a vision model.
+2. **Story generation** (Pass A): the LLM writes a short narrative (~200-500 words) that uses the provided references, based on an optional premise and a target language.
+3. **Sequence breakdown** (Pass B): the LLM receives the story, the reference library, and the allowed camera-motion vocabulary, and returns a JSON array of N sequences — for each one it picks the relevant references, whether dialogue is present, and the camera movement itself. A reconciliation step automatically re-adds any reference the LLM forgot to list (keyword overlap between a sequence's brief and the reference descriptions).
+4. **Final prompt generation**: each sequence is expanded into a full, isolated Ref2VA prompt (strict isolation rule: content from one sequence must never leak into another).
+
+Robustness: repair of truncated JSON (a common failure mode caused by local models' `max_tokens` limits), with automatic retry on parsing failure.
+
+**Save/load**: dedicated buttons to save the entire session (references, premise, language, story, sequence count/duration, style, extra instructions, generated sequences) to a `.json` file, and reload it later to resume work.
+
+---
+
+## Supported LLM backends
+
+| Backend | API | Default host |
 |---|---|---|
 | **Ollama** | native (`/api/tags`, `/api/chat`) | `http://localhost:11434` |
-| **LM Studio** | compatible OpenAI (`/v1/models`, `/v1/chat/completions`) | `http://localhost:1234` |
-| **llama.cpp** (llama-server) | compatible OpenAI (`/v1/models`, `/v1/chat/completions`) | `http://localhost:8080` |
+| **LM Studio** | OpenAI-compatible (`/v1/models`, `/v1/chat/completions`) | `http://localhost:1234` |
+| **llama.cpp** (llama-server) | OpenAI-compatible (`/v1/models`, `/v1/chat/completions`) | `http://localhost:8080` |
 
-Le backend est sélectionnable dans l'onglet Réglages ; les trois URLs sont conservées indépendamment (basculer de backend ne perd pas la config des autres). Le chat et la description d'image (vision) fonctionnent avec les trois backends, y compris en streaming.
+The backend is selectable in the Settings tab; all three URLs are kept independently (switching backends doesn't lose the other ones' config). Chat and image description (vision) both work across all three backends, including streaming.
 
 ---
 
@@ -88,55 +88,55 @@ Le backend est sélectionnable dans l'onglet Réglages ; les trois URLs sont con
 pip install customtkinter requests
 ```
 
-Un des trois backends doit tourner localement :
+One of the three backends must be running locally:
 
 ```bash
 # Ollama
 ollama serve
-ollama pull qwen2.5:14b-instruct     # modèle de chat
-ollama pull qwen2.5vl:7b             # modèle de vision (optionnel, pour la description auto d'images)
+ollama pull qwen2.5:14b-instruct     # chat model
+ollama pull qwen2.5vl:7b             # vision model (optional, for automatic image description)
 ```
 
-Puis lancer l'application :
+Then launch the app:
 
 ```bash
 python main.py
 ```
 
-**Recommandation** : un modèle de chat 14B+ suit beaucoup mieux le format H3 structuré qu'un petit modèle.
+**Recommendation**: a 14B+ chat model follows the structured H3 format far better than a small model.
 
 ---
 
 ## Configuration
 
-Dans l'onglet **⚙ Settings** :
-- Choix du backend et de ses URLs.
-- Bouton "Test connection / refresh models" pour lister les modèles disponibles sur le backend actif.
-- Choix du modèle de chat (texte) et du modèle de vision (optionnel).
-- Température et durée par défaut.
+In the **⚙ Settings** tab:
+- Backend selection and its URLs.
+- "Test connection / refresh models" button to list the models available on the active backend.
+- Choice of chat model (text) and vision model (optional).
+- Temperature and default duration.
 
-Les réglages sont sauvegardés automatiquement dans `~/.h3_prompt_studio_config.json` à la fermeture de l'app.
-
----
-
-## Architecture du code
-
-```
-main.py               # UI CustomTkinter : onglets par mode, Ref2VA + storyboard,
-                       # Story→Sequences, Réglages, zone de sortie/streaming
-system_prompts.py      # Règles H3 (caméra, dialogue, texte à l'écran, son, durée,
-                       # timestamps) assemblées en system prompts par mode
-sequence_pipeline.py    # Pipeline Story→Sequences : génération d'histoire,
-                       # découpage JSON en séquences, réparation JSON tronqué,
-                       # réconciliation des références, construction des briefs
-llm_client.py          # Abstraction multi-backend (Ollama / LM Studio / llama.cpp) :
-                       # chat streaming, listing des modèles, description d'image
-```
+Settings are automatically saved to `~/.h3_prompt_studio_config.json` when the app closes.
 
 ---
 
-## Limites connues
+## Code architecture
 
-- Ref2VA / Story→Sequences : maximum 9 images, 3 vidéos, 3 audios, 12 références au total (limite du modèle H3).
-- La qualité du JSON structuré (découpage en séquences, prompts H3) dépend fortement de la capacité du modèle de chat local à suivre des instructions de format strict — les petits modèles (<7B) sont sujets à des troncatures ou des JSON malformés, partiellement compensées par les mécanismes de réparation intégrés.
-- Aucune génération vidéo/audio réelle n'est effectuée par l'application : elle produit uniquement le prompt texte destiné à être soumis à H3 (via ComfyUI ou autre runtime compatible).
+```
+main.py               # CustomTkinter UI: per-mode tabs, Ref2VA + storyboard,
+                       # Story→Sequences, Settings, output/streaming pane
+system_prompts.py      # H3 rules (camera, dialogue, on-screen text, sound, duration,
+                       # timestamps) assembled into per-mode system prompts
+sequence_pipeline.py    # Story→Sequences pipeline: story generation, JSON sequence
+                       # breakdown, truncated-JSON repair, reference reconciliation,
+                       # brief construction
+llm_client.py          # Multi-backend abstraction (Ollama / LM Studio / llama.cpp):
+                       # streaming chat, model listing, image description
+```
+
+---
+
+## Known limitations
+
+- Ref2VA / Story→Sequences: maximum 9 images, 3 videos, 3 audio clips, 12 references total (H3 model limit).
+- The quality of structured JSON output (sequence breakdown, H3 prompts) depends heavily on the local chat model's ability to follow strict formatting instructions — smaller models (<7B) are prone to truncation or malformed JSON, partially mitigated by the built-in repair mechanisms.
+- The app does not perform any actual video/audio generation: it only produces the text prompt meant to be fed into H3 (via ComfyUI or another compatible runtime).
